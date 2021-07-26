@@ -218,32 +218,6 @@ fn test_request_redeem_succeeds_with_normal_redeem() {
 }
 
 #[test]
-fn test_liquidation_redeem_succeeds() {
-    run_test(|| {
-        let total_amount = 10 * 100_000_000;
-
-        ext::treasury::get_balance::<Test>.mock_safe(move |_| MockResult::Return(total_amount));
-
-        ext::treasury::lock::<Test>.mock_safe(move |_, _| MockResult::Return(Ok(())));
-        ext::treasury::burn::<Test>.mock_safe(move |redeemer_id, amount| {
-            assert_eq!(redeemer_id, &ALICE);
-            assert_eq!(amount, total_amount);
-
-            MockResult::Return(Ok(()))
-        });
-
-        ext::vault_registry::redeem_tokens_liquidation::<Test>.mock_safe(move |redeemer_id, amount| {
-            assert_eq!(redeemer_id, &ALICE);
-            assert_eq!(amount, total_amount);
-
-            MockResult::Return(Ok(()))
-        });
-
-        assert_ok!(Redeem::liquidation_redeem(Origin::signed(ALICE), total_amount,));
-    })
-}
-
-#[test]
 fn test_execute_redeem_fails_with_redeem_id_not_found() {
     run_test(|| {
         ext::oracle::wrapped_to_collateral::<Test>.mock_safe(|x| MockResult::Return(btcdot_parity(x)));
@@ -579,6 +553,34 @@ mod spec_based_tests {
                 BtcAddress::random(),
                 BOB
             ));
+        })
+    }
+
+    #[test]
+    fn test_liquidation_redeem_succeeds() {
+        // Checked POSTCONDITION: `redeemTokensLiquidation` MUST be called with `redeemer`
+        // and `amountWrapped` as arguments.
+        run_test(|| {
+            let total_amount = 10 * 100_000_000;
+
+            ext::treasury::get_balance::<Test>.mock_safe(move |_| MockResult::Return(total_amount));
+
+            ext::treasury::lock::<Test>.mock_safe(move |_, _| MockResult::Return(Ok(())));
+            ext::treasury::burn::<Test>.mock_safe(move |redeemer_id, amount| {
+                assert_eq!(redeemer_id, &ALICE);
+                assert_eq!(amount, total_amount);
+
+                MockResult::Return(Ok(()))
+            });
+
+            ext::vault_registry::redeem_tokens_liquidation::<Test>.mock_safe(move |redeemer_id, amount| {
+                assert_eq!(redeemer_id, &ALICE);
+                assert_eq!(amount, total_amount);
+
+                MockResult::Return(Ok(()))
+            });
+
+            assert_ok!(Redeem::liquidation_redeem(Origin::signed(ALICE), total_amount,));
         })
     }
 }

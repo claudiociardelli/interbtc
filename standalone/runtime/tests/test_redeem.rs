@@ -220,28 +220,21 @@ mod spec_based_tests {
                         ..UserData::get(USER)
                     },
                 );
-                assert_ok!(Call::Redeem(RedeemCall::request_redeem(
-                    free_tokens_to_redeem,
-                    BtcAddress::P2PKH(H160([0u8; 20])),
-                    account_of(VAULT),
-                ))
-                .dispatch(origin_of(account_of(ALICE))));
-                UserData::force_to(
-                    ALICE,
-                    UserData {
-                        free_tokens: free_tokens_to_redeem - 1,
-                        ..UserData::get(USER)
-                    },
-                );
                 assert_noop!(
                     Call::Redeem(RedeemCall::request_redeem(
-                        free_tokens_to_redeem,
+                        free_tokens_to_redeem + 1,
                         BtcAddress::P2PKH(H160([0u8; 20])),
                         account_of(VAULT),
                     ))
                     .dispatch(origin_of(account_of(ALICE))),
                     RedeemError::AmountExceedsUserBalance,
                 );
+                assert_ok!(Call::Redeem(RedeemCall::request_redeem(
+                    free_tokens_to_redeem,
+                    BtcAddress::P2PKH(H160([0u8; 20])),
+                    account_of(VAULT),
+                ))
+                .dispatch(origin_of(account_of(ALICE))));
             });
         }
 
@@ -362,6 +355,35 @@ mod spec_based_tests {
                     account_of(VAULT),
                 ))
                 .dispatch(origin_of(account_of(ALICE))));
+            });
+        }
+    }
+
+    mod liquidation_redeem {
+        use super::*;
+        #[test]
+        fn integration_test_liquidation_redeem() {
+            // Checked PRECONDITION: The redeemer MUST have at least `amountWrapped` free tokens.
+            // Checked POSTCONDITION: `amountWrapped` tokens MUST be burned from the user.
+            test_with(|| {
+                let free_tokens_to_redeem = 1500;
+                set_redeem_state(0, free_tokens_to_redeem, USER, VAULT);
+                drop_exchange_rate_and_liquidate(VAULT);
+                assert_noop!(
+                    Call::Redeem(RedeemCall::liquidation_redeem(free_tokens_to_redeem + 1))
+                        .dispatch(origin_of(account_of(ALICE))),
+                    RedeemError::AmountExceedsUserBalance,
+                );
+                let user_tokens_before_redeem = TreasuryPallet::get_free_balance(&account_of(USER));
+                let tokens_to_liquidation_redeem = free_tokens_to_redeem - 10;
+                assert_ok!(Call::Redeem(RedeemCall::liquidation_redeem(free_tokens_to_redeem - 10))
+                    .dispatch(origin_of(account_of(ALICE))));
+                let user_tokens_after_redeem = TreasuryPallet::get_free_balance(&account_of(USER));
+
+                assert_eq!(
+                    user_tokens_before_redeem - tokens_to_liquidation_redeem,
+                    user_tokens_after_redeem
+                )
             });
         }
     }
