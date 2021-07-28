@@ -24,6 +24,7 @@ pub use sp_runtime::traits::{Dispatchable, One, Zero};
 pub use sp_std::convert::TryInto;
 pub use vault_registry::CurrencySource;
 
+pub use exchange_rate_oracle::{BitcoinInclusionTime, CurrencyId, OracleKey};
 pub use issue::IssueRequest;
 pub use redeem::RedeemRequest;
 pub use refund::RefundRequest;
@@ -47,8 +48,6 @@ pub const DAVE: [u8; 32] = [10u8; 32];
 pub const EVE: [u8; 32] = [11u8; 32];
 pub const FRANK: [u8; 32] = [12u8; 32];
 pub const GRACE: [u8; 32] = [13u8; 32];
-
-pub const MAINTAINER: [u8; 32] = [5u8; 32];
 
 pub const FAUCET: [u8; 32] = [128u8; 32];
 pub const DUMMY: [u8; 32] = [255u8; 32];
@@ -117,9 +116,6 @@ pub type ReplacePallet = replace::Pallet<Runtime>;
 
 pub type SecurityError = security::Error<Runtime>;
 pub type SecurityPallet = security::Pallet<Runtime>;
-
-pub type SlaPallet = sla::Pallet<Runtime>;
-pub type SlaCall = sla::Call<Runtime>;
 
 pub type RelayCall = relay::Call<Runtime>;
 pub type RelayPallet = relay::Pallet<Runtime>;
@@ -903,24 +899,6 @@ impl ExtBuilder {
             premium_redeem_fee: FixedU128::checked_from_rational(5, 100).unwrap(), // 5%
             punishment_fee: FixedU128::checked_from_rational(1, 10).unwrap(), // 10%
             replace_griefing_collateral: FixedU128::checked_from_rational(1, 10).unwrap(), // 10%
-            maintainer_account_id: account_of(MAINTAINER),
-            vault_rewards: FixedU128::checked_from_rational(90, 100).unwrap(), // 70%
-            maintainer_rewards: FixedU128::checked_from_rational(10, 100).unwrap(), // 10%
-            nomination_rewards: FixedU128::checked_from_rational(0, 100).unwrap(), // 0%
-        }
-        .assimilate_storage(&mut storage)
-        .unwrap();
-
-        sla::GenesisConfig::<Runtime> {
-            vault_target_sla: FixedI128::from(100),
-            vault_redeem_failure_sla_change: FixedI128::from(-100),
-            vault_execute_issue_max_sla_change: FixedI128::from(4),
-            vault_deposit_max_sla_change: FixedI128::from(4),
-            vault_withdraw_max_sla_change: FixedI128::from(-4),
-            vault_submit_issue_proof: FixedI128::from(1),
-            vault_refund: FixedI128::from(1),
-            relayer_store_block: FixedI128::from(1),
-            relayer_theft_report: FixedI128::from(1),
         }
         .assimilate_storage(&mut storage)
         .unwrap();
@@ -943,10 +921,14 @@ impl ExtBuilder {
                 ))
                 .dispatch(root())
             );
-            assert_ok!(
-                Call::ExchangeRateOracle(ExchangeRateOracleCall::set_btc_tx_fees_per_byte(3, 2, 1))
-                    .dispatch(origin_of(account_of(ALICE)))
-            );
+            assert_ok!(Call::ExchangeRateOracle(ExchangeRateOracleCall::feed_values(vec![
+                (OracleKey::ExchangeRate(CurrencyId::DOT), FixedU128::from(1)),
+                (OracleKey::FeeEstimation(BitcoinInclusionTime::Fast), FixedU128::from(3)),
+                (OracleKey::FeeEstimation(BitcoinInclusionTime::Half), FixedU128::from(2)),
+                (OracleKey::FeeEstimation(BitcoinInclusionTime::Hour), FixedU128::from(1)),
+            ]))
+            .dispatch(origin_of(account_of(ALICE))));
+            ExchangeRateOraclePallet::begin_block(0);
 
             execute()
         })

@@ -133,7 +133,7 @@ fn test_request_redeem_fails_with_vault_liquidated() {
     run_test(|| {
         ext::vault_registry::ensure_not_banned::<Test>.mock_safe(|_| MockResult::Return(Ok(())));
         assert_err!(
-            Redeem::request_redeem(Origin::signed(ALICE), 3, BtcAddress::random(), BOB),
+            Redeem::request_redeem(Origin::signed(ALICE), 3000, BtcAddress::random(), BOB),
             VaultRegistryError::VaultNotFound
         );
     })
@@ -160,7 +160,7 @@ fn test_request_redeem_succeeds_with_normal_redeem() {
         );
 
         let redeemer = ALICE;
-        let amount = 9;
+        let amount = 90;
         let redeem_fee = 5;
 
         ext::vault_registry::try_increase_to_be_redeemed_tokens::<Test>.mock_safe(move |vault_id, amount_btc| {
@@ -178,8 +178,9 @@ fn test_request_redeem_succeeds_with_normal_redeem() {
         });
 
         ext::security::get_secure_id::<Test>.mock_safe(move |_| MockResult::Return(H256([0; 32])));
-
+        ext::vault_registry::is_vault_below_premium_threshold::<Test>.mock_safe(move |_| MockResult::Return(Ok(false)));
         ext::fee::get_redeem_fee::<Test>.mock_safe(move |_| MockResult::Return(Ok(redeem_fee)));
+        let btc_fee = Redeem::get_current_inclusion_fee().unwrap();
 
         assert_ok!(Redeem::request_redeem(
             Origin::signed(redeemer),
@@ -191,7 +192,7 @@ fn test_request_redeem_succeeds_with_normal_redeem() {
         assert_emitted!(Event::RequestRedeem(
             H256([0; 32]),
             redeemer,
-            amount - redeem_fee,
+            amount - redeem_fee - btc_fee,
             redeem_fee,
             0,
             BOB,
@@ -205,7 +206,7 @@ fn test_request_redeem_succeeds_with_normal_redeem() {
                 vault: BOB,
                 opentime: 1,
                 fee: redeem_fee,
-                amount_btc: amount - redeem_fee,
+                amount_btc: amount - redeem_fee - btc_fee,
                 premium: 0,
                 redeemer,
                 btc_address: BtcAddress::P2PKH(H160::zero()),
@@ -224,6 +225,79 @@ fn test_execute_redeem_fails_with_redeem_id_not_found() {
         assert_err!(
             Redeem::execute_redeem(Origin::signed(BOB), H256([0u8; 32]), Vec::default(), Vec::default()),
             TestError::RedeemIdNotFound
+        );
+    })
+}
+
+#[test]
+fn test_execute_redeem_succeeds_with_another_account() {
+    run_test(|| {
+        ext::oracle::wrapped_to_collateral::<Test>.mock_safe(|x| MockResult::Return(btcdot_parity(x)));
+        Security::<Test>::set_active_block_number(40);
+        <vault_registry::Pallet<Test>>::insert_vault(
+            &BOB,
+            vault_registry::Vault {
+                id: BOB,
+                to_be_replaced_tokens: 0,
+                to_be_issued_tokens: 0,
+                issued_tokens: 200,
+                to_be_redeemed_tokens: 200,
+                replace_collateral: 0,
+                wallet: Wallet::new(dummy_public_key()),
+                banned_until: None,
+                status: VaultStatus::Active(true),
+                ..Default::default()
+            },
+        );
+        ext::btc_relay::parse_merkle_proof::<Test>.mock_safe(|_| MockResult::Return(Ok(dummy_merkle_proof())));
+        ext::btc_relay::parse_transaction::<Test>.mock_safe(|_| MockResult::Return(Ok(Transaction::default())));
+        ext::btc_relay::verify_and_validate_op_return_transaction::<Test, Balance>
+            .mock_safe(|_, _, _, _, _| MockResult::Return(Ok(())));
+
+        let btc_fee = Redeem::get_current_inclusion_fee().unwrap();
+
+        inject_redeem_request(
+            H256([0u8; 32]),
+            RedeemRequest {
+                period: 0,
+                vault: BOB,
+                opentime: 40,
+                fee: 0,
+                amount_btc: 100,
+                premium: 0,
+                redeemer: ALICE,
+                btc_address: BtcAddress::random(),
+                btc_height: 0,
+                status: RedeemRequestStatus::Pending,
+                transfer_fee_btc: btc_fee,
+            },
+        );
+
+        ext::treasury::burn::<Test>.mock_safe(move |redeemer, amount_wrapped| {
+            assert_eq!(redeemer, &ALICE);
+            assert_eq!(amount_wrapped, 100 + btc_fee);
+
+            MockResult::Return(Ok(()))
+        });
+
+        ext::vault_registry::redeem_tokens::<Test>.mock_safe(move |vault, amount_wrapped, premium, _| {
+            assert_eq!(vault, &BOB);
+            assert_eq!(amount_wrapped, 100 + btc_fee);
+            assert_eq!(premium, 0);
+
+            MockResult::Return(Ok(()))
+        });
+
+        assert_ok!(Redeem::execute_redeem(
+            Origin::signed(ALICE),
+            H256([0u8; 32]),
+            Vec::default(),
+            Vec::default()
+        ));
+        assert_emitted!(Event::ExecuteRedeem(H256([0; 32]), ALICE, 100, 0, BOB, btc_fee,));
+        assert_err!(
+            Redeem::get_open_redeem_request_from_id(&H256([0u8; 32])),
+            TestError::RedeemCompleted,
         );
     })
 }
@@ -274,14 +348,14 @@ fn test_execute_redeem_succeeds() {
 
         ext::treasury::burn::<Test>.mock_safe(move |redeemer, amount_wrapped| {
             assert_eq!(redeemer, &ALICE);
-            assert_eq!(amount_wrapped, 100);
+            assert_eq!(amount_wrapped, 100 + btc_fee);
 
             MockResult::Return(Ok(()))
         });
 
         ext::vault_registry::redeem_tokens::<Test>.mock_safe(move |vault, amount_wrapped, premium, _| {
             assert_eq!(vault, &BOB);
-            assert_eq!(amount_wrapped, 100);
+            assert_eq!(amount_wrapped, 100 + btc_fee);
             assert_eq!(premium, 0);
 
             MockResult::Return(Ok(()))
@@ -377,7 +451,7 @@ fn test_cancel_redeem_succeeds() {
                 vault: BOB,
                 opentime: 10,
                 fee: 0,
-                amount_btc: 0,
+                amount_btc: 10,
                 premium: 0,
                 redeemer: ALICE,
                 btc_address: BtcAddress::random(),
@@ -393,7 +467,7 @@ fn test_cancel_redeem_succeeds() {
             assert_eq!(vault, BOB);
             MockResult::Return(Ok(()))
         });
-        ext::vault_registry::calculate_slashed_amount::<Test>.mock_safe(move |_, _, _| MockResult::Return(Ok(0)));
+        ext::treasury::unlock::<Test>.mock_safe(|_, _| MockResult::Return(Ok(())));
         ext::vault_registry::transfer_funds_saturated::<Test>.mock_safe(move |_, _, _| MockResult::Return(Ok(0)));
         ext::vault_registry::get_vault_from_id::<Test>.mock_safe(|_| {
             MockResult::Return(Ok(vault_registry::types::Vault {
@@ -411,7 +485,7 @@ fn test_cancel_redeem_succeeds() {
             H256([0; 32]),
             ALICE,
             BOB,
-            0,
+            1,
             RedeemRequestStatus::Retried
         ));
     })
@@ -437,34 +511,23 @@ mod spec_based_tests {
         // The returned `replaceCollateral` MUST be released by this function.
         run_test(|| {
             let amount_to_redeem = 100;
-            let to_be_replaced_tokens = 10;
             let replace_collateral = 100;
             assert_ok!(<Test as vault_registry::Config>::Wrapped::mint(
                 &ALICE,
                 amount_to_redeem
             ));
-            <vault_registry::Pallet<Test>>::insert_vault(
-                &BOB,
-                vault_registry::Vault {
-                    id: BOB,
-                    to_be_replaced_tokens: to_be_replaced_tokens,
-                    to_be_issued_tokens: 0,
-                    issued_tokens: amount_to_redeem,
-                    to_be_redeemed_tokens: 0,
-                    replace_collateral: replace_collateral,
-                    wallet: Wallet::new(dummy_public_key()),
-                    banned_until: None,
-                    status: VaultStatus::Active(true),
-                    ..Default::default()
-                },
-            );
+            ext::vault_registry::ensure_not_banned::<Test>.mock_safe(move |_vault_id| MockResult::Return(Ok(())));
+            ext::vault_registry::try_increase_to_be_redeemed_tokens::<Test>
+                .mock_safe(move |_vault_id, _amount| MockResult::Return(Ok(())));
+            ext::vault_registry::is_vault_below_premium_threshold::<Test>
+                .mock_safe(move |_vault_id| MockResult::Return(Ok(false)));
             let redeem_fee = Fee::get_redeem_fee(amount_to_redeem).unwrap();
             let burned_tokens = amount_to_redeem - redeem_fee;
 
             ext::vault_registry::decrease_to_be_replaced_tokens::<Test>.mock_safe(move |vault_id, tokens| {
                 assert_eq!(vault_id, &BOB);
                 assert_eq!(tokens, burned_tokens);
-                MockResult::Return(VaultRegistry::decrease_to_be_replaced_tokens(vault_id, tokens))
+                MockResult::Return(Ok((0, 0)))
             });
 
             // The returned `replaceCollateral` MUST be released

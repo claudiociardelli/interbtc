@@ -166,28 +166,6 @@ pub(crate) mod vault_registry {
     ) -> Result<(Wrapped<T>, Collateral<T>), DispatchError> {
         <vault_registry::Pallet<T>>::decrease_to_be_replaced_tokens(vault_id, tokens)
     }
-
-    pub fn calculate_slashed_amount<T: crate::Config>(
-        vault_id: &T::AccountId,
-        stake: Collateral<T>,
-        reimburse: bool,
-    ) -> Result<Collateral<T>, DispatchError> {
-        <vault_registry::Pallet<T>>::calculate_slashed_amount(vault_id, stake, reimburse)
-    }
-}
-
-#[cfg_attr(test, mockable)]
-pub(crate) mod sla {
-    use crate::types::BalanceOf;
-    use frame_support::dispatch::DispatchError;
-    pub use sla::Action;
-
-    pub fn event_update_vault_sla<T: crate::Config>(
-        vault_id: &T::AccountId,
-        action: Action<BalanceOf<T>>,
-    ) -> Result<(), DispatchError> {
-        <sla::Pallet<T>>::event_update_vault_sla(vault_id, action)
-    }
 }
 
 #[cfg_attr(test, mockable)]
@@ -249,16 +227,20 @@ pub(crate) mod security {
 
 #[cfg_attr(test, mockable)]
 pub(crate) mod oracle {
-    use crate::types::{Collateral, Wrapped};
-    use exchange_rate_oracle::BtcTxFeesPerByte;
+    use crate::{
+        types::{Collateral, Wrapped},
+        OracleKey,
+    };
     use frame_support::dispatch::DispatchError;
-
-    pub fn satoshi_per_bytes<T: crate::Config>() -> BtcTxFeesPerByte {
-        <exchange_rate_oracle::Pallet<T>>::satoshi_per_bytes()
-    }
 
     pub fn wrapped_to_collateral<T: crate::Config>(amount: Wrapped<T>) -> Result<Collateral<T>, DispatchError> {
         <exchange_rate_oracle::Pallet<T>>::wrapped_to_collateral(amount)
+    }
+
+    pub fn get_price<T: crate::Config>(
+        key: OracleKey,
+    ) -> Result<<T as exchange_rate_oracle::Config>::UnsignedFixedPoint, DispatchError> {
+        <exchange_rate_oracle::Pallet<T>>::get_price(key)
     }
 }
 

@@ -39,7 +39,6 @@ frame_support::construct_runtime!(
         ExchangeRateOracle: exchange_rate_oracle::{Pallet, Call, Config<T>, Storage, Event<T>},
         Issue: issue::{Pallet, Call, Config<T>, Storage, Event<T>},
         Fee: fee::{Pallet, Call, Config<T>, Storage},
-        Sla: sla::{Pallet, Call, Config<T>, Storage, Event<T>},
         Refund: refund::{Pallet, Call, Config<T>, Storage, Event<T>},
         Staking: staking::{Pallet, Storage, Event<T>},
     }
@@ -149,7 +148,6 @@ impl vault_registry::Config for Test {
     type SignedFixedPoint = SignedFixedPoint;
     type UnsignedFixedPoint = UnsignedFixedPoint;
     type WeightInfo = ();
-    type VaultRewards = reward::RewardsCurrencyAdapter<Test, (), GetWrappedCurrencyId>;
     type Collateral = CurrencyAdapter<Test, GetCollateralCurrencyId>;
     type Wrapped = CurrencyAdapter<Test, GetWrappedCurrencyId>;
     type GetRewardsCurrencyId = GetWrappedCurrencyId;
@@ -212,16 +210,8 @@ impl fee::Config for Test {
     type UnsignedInner = UnsignedInner;
     type VaultRewards = reward::RewardsCurrencyAdapter<Test, (), GetWrappedCurrencyId>;
     type VaultStaking = staking::StakingCurrencyAdapter<Test, GetWrappedCurrencyId>;
-    type Collateral = CurrencyAdapter<Test, GetCollateralCurrencyId>;
     type Wrapped = CurrencyAdapter<Test, GetWrappedCurrencyId>;
-}
-
-impl sla::Config for Test {
-    type Event = TestEvent;
-    type SignedFixedPoint = SignedFixedPoint;
-    type SignedInner = SignedInner;
-    type Balance = Balance;
-    type VaultRewards = reward::RewardsCurrencyAdapter<Test, (), GetWrappedCurrencyId>;
+    type OnSweep = ();
 }
 
 impl Config for Test {
@@ -258,10 +248,6 @@ impl ExtBuilder {
             premium_redeem_fee: UnsignedFixedPoint::checked_from_rational(5, 100).unwrap(), // 5%
             punishment_fee: UnsignedFixedPoint::checked_from_rational(1, 10).unwrap(), // 10%
             replace_griefing_collateral: UnsignedFixedPoint::checked_from_rational(1, 10).unwrap(), // 10%
-            maintainer_account_id: 1,
-            vault_rewards: UnsignedFixedPoint::checked_from_rational(80, 100).unwrap(),
-            maintainer_rewards: UnsignedFixedPoint::checked_from_rational(20, 100).unwrap(),
-            nomination_rewards: UnsignedFixedPoint::checked_from_rational(0, 100).unwrap(),
         }
         .assimilate_storage(&mut storage)
         .unwrap();

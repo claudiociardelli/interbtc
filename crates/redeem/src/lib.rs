@@ -31,13 +31,14 @@ pub use crate::types::{RedeemRequest, RedeemRequestStatus};
 
 use crate::types::{BalanceOf, Collateral, Version, Wrapped};
 use btc_relay::BtcAddress;
+use exchange_rate_oracle::{BitcoinInclusionTime, OracleKey};
 use frame_support::{
     dispatch::{DispatchError, DispatchResult},
     ensure, transactional,
 };
 use frame_system::{ensure_root, ensure_signed};
 use sp_core::H256;
-use sp_runtime::traits::*;
+use sp_runtime::{traits::*, FixedPointNumber};
 use sp_std::{convert::TryInto, vec::Vec};
 use vault_registry::CurrencySource;
 
@@ -53,11 +54,7 @@ pub mod pallet {
     /// The pallet's configuration trait.
     #[pallet::config]
     pub trait Config:
-        frame_system::Config
-        + vault_registry::Config
-        + btc_relay::Config
-        + fee::Config<UnsignedInner = BalanceOf<Self>>
-        + sla::Config<Balance = BalanceOf<Self>>
+        frame_system::Config + vault_registry::Config + btc_relay::Config + fee::Config<UnsignedInner = BalanceOf<Self>>
     {
         /// The overarching event type.
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
@@ -480,7 +477,6 @@ impl<T: Config> Pallet<T> {
             .ok_or(Error::<T>::ArithmeticOverflow)?;
 
         let amount_wrapped_in_collateral = ext::oracle::wrapped_to_collateral::<T>(vault_to_be_burned_tokens)?;
-        let punishment_fee_in_collateral = ext::fee::get_punishment_fee::<T>(amount_wrapped_in_collateral)?;
 
         // now update the collateral; the logic is different for liquidated vaults.
         let slashed_amount = if vault.is_liquidated() {
@@ -505,43 +501,26 @@ impl<T: Config> Pallet<T> {
             confiscated_collateral
         } else {
             // not liquidated
-            let slashed_collateral = if reimburse {
-                // user requested to be reimbursed in collateral
-                let reimburse_in_collateral = amount_wrapped_in_collateral
-                    .checked_add(&punishment_fee_in_collateral)
-                    .ok_or(Error::<T>::ArithmeticOverflow)?;
-                ext::vault_registry::transfer_funds_saturated::<T>(
-                    CurrencySource::Collateral(vault_id.clone()),
-                    CurrencySource::FreeBalance(redeem.redeemer.clone()),
-                    reimburse_in_collateral,
-                )?
-            } else {
-                // user chose to keep their issued tokens - only transfer it the punishment fee
-                // returns the amount actually slashed
-                ext::vault_registry::transfer_funds_saturated::<T>(
-                    CurrencySource::Collateral(vault_id.clone()),
-                    CurrencySource::FreeBalance(redeemer.clone()),
-                    punishment_fee_in_collateral,
-                )?
-            };
-            // calculate additional amount to slash, a high SLA means we slash less
-            let slashing_amount_in_collateral =
-                ext::vault_registry::calculate_slashed_amount::<T>(&vault_id, amount_wrapped_in_collateral, reimburse)?;
 
-            // slash the remaining amount from the vault to the fee pool
-            let remaining_collateral_to_be_slashed = slashing_amount_in_collateral
-                .checked_sub(&slashed_collateral)
-                .ok_or(Error::<T>::ArithmeticUnderflow)?;
-            if remaining_collateral_to_be_slashed > Collateral::<T>::zero() {
-                ext::vault_registry::transfer_funds_saturated::<T>(
-                    CurrencySource::Collateral(vault_id.clone()),
-                    CurrencySource::FreeBalance(redeemer.clone()),
-                    remaining_collateral_to_be_slashed,
-                )?;
-            }
+            // calculate the punishment fee (e.g. 10%)
+            let punishment_fee_in_collateral = ext::fee::get_punishment_fee::<T>(amount_wrapped_in_collateral)?;
+
+            let amount_to_slash = if reimburse {
+                // 100% + punishment fee on reimburse
+                amount_wrapped_in_collateral + punishment_fee_in_collateral
+            } else {
+                punishment_fee_in_collateral
+            };
+
+            ext::vault_registry::transfer_funds_saturated::<T>(
+                CurrencySource::Collateral(vault_id.clone()),
+                CurrencySource::FreeBalance(redeemer.clone()),
+                amount_to_slash,
+            )?;
+
             let _ = ext::vault_registry::ban_vault::<T>(vault_id.clone());
 
-            slashing_amount_in_collateral
+            amount_to_slash
         };
 
         // first update the issued tokens; this logic is the same regardless of whether or not the vault is liquidated
@@ -556,7 +535,7 @@ impl<T: Config> Pallet<T> {
             ext::fee::distribute_rewards::<T>(redeem.fee)?;
 
             if ext::vault_registry::is_vault_below_secure_threshold::<T>(&redeem.vault)? {
-                // vault can not afford to back the tokens that he would receive, so we burn it
+                // vault can not afford to back the tokens that it would receive, so we burn it
                 ext::treasury::burn::<T>(&redeemer, vault_to_be_burned_tokens)?;
                 ext::vault_registry::decrease_tokens::<T>(&redeem.vault, &redeem.redeemer, vault_to_be_burned_tokens)?;
                 Self::set_redeem_status(redeem_id, RedeemRequestStatus::Reimbursed(false))
@@ -579,7 +558,6 @@ impl<T: Config> Pallet<T> {
             Self::set_redeem_status(redeem_id, RedeemRequestStatus::Retried)
         };
 
-        ext::sla::event_update_vault_sla::<T>(&vault_id, ext::sla::Action::RedeemFailure)?;
         Self::deposit_event(<Event<T>>::CancelRedeem(
             redeem_id,
             redeemer,
@@ -648,10 +626,10 @@ impl<T: Config> Pallet<T> {
     pub fn get_current_inclusion_fee() -> Result<Wrapped<T>, DispatchError> {
         {
             let size: u32 = Self::redeem_transaction_size();
-            let satoshi_per_bytes: u32 = ext::oracle::satoshi_per_bytes::<T>().fast;
+            let satoshi_per_bytes = ext::oracle::get_price::<T>(OracleKey::FeeEstimation(BitcoinInclusionTime::Fast))?;
 
-            let fee = (size as u64)
-                .checked_mul(satoshi_per_bytes as u64)
+            let fee = satoshi_per_bytes
+                .checked_mul_int(size)
                 .ok_or(Error::<T>::ArithmeticOverflow)?;
             fee.try_into().map_err(|_| Error::<T>::TryIntoIntError.into())
         }

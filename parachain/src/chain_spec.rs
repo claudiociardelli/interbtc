@@ -4,8 +4,8 @@ use hex_literal::hex;
 use interbtc_runtime::{
     AccountId, AuraConfig, BTCRelayConfig, ExchangeRateOracleConfig, FeeConfig, GeneralCouncilConfig, GenesisConfig,
     IssueConfig, NominationConfig, ParachainInfoConfig, RedeemConfig, RefundConfig, ReplaceConfig, Signature,
-    SlaConfig, SudoConfig, SystemConfig, TechnicalCommitteeConfig, TokensConfig, VaultRegistryConfig,
-    BITCOIN_BLOCK_SPACING, DAYS, DOT, WASM_BINARY,
+    SudoConfig, SystemConfig, TechnicalCommitteeConfig, TokensConfig, VaultRegistryConfig, BITCOIN_BLOCK_SPACING, DAYS,
+    DOT, WASM_BINARY,
 };
 use sc_chain_spec::{ChainSpecExtension, ChainSpecGroup};
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use frame_benchmarking::account;
 
 use interbtc_rpc::jsonrpc_core::serde_json::{self, json};
 use sc_service::ChainType;
-use sp_arithmetic::{FixedI128, FixedPointNumber, FixedU128};
+use sp_arithmetic::{FixedPointNumber, FixedU128};
 use sp_core::{sr25519, Pair, Public};
 use sp_runtime::traits::{IdentifyAccount, Verify};
 use std::str::FromStr;
@@ -74,7 +74,6 @@ pub fn local_config(id: ParaId) -> ChainSpec {
         move || {
             testnet_genesis(
                 get_account_id_from_seed::<sr25519::Public>("Alice"),
-                get_account_id_from_seed::<sr25519::Public>("Maintainer"),
                 vec![],
                 vec![
                     get_account_id_from_seed::<sr25519::Public>("Alice"),
@@ -124,7 +123,6 @@ pub fn rococo_testnet_config(id: ParaId) -> ChainSpec {
         move || {
             testnet_genesis(
                 get_account_id_from_string("5HeVGqvfpabwFqzV1DhiQmjaLQiFcTSmq2sH6f7atsXkgvtt"),
-                get_account_id_from_string("5FqYNDWeJ9bwa3NhEryxscBELAMj54yrKqGaYNR9CjLZFYLB"),
                 vec![
                     // 5DJ3wbdicFSFFudXndYBuvZKjucTsyxtJX5WPzQM8HysSkFY
                     hex!["366a092a27b4b28199a588b0155a2c9f3f0513d92481de4ee2138273926fa91c"].unchecked_into(),
@@ -176,7 +174,6 @@ pub fn development_config(id: ParaId) -> ChainSpec {
         move || {
             testnet_genesis(
                 get_account_id_from_seed::<sr25519::Public>("Alice"),
-                get_account_id_from_seed::<sr25519::Public>("Maintainer"),
                 vec![get_from_seed::<AuraId>("Alice")],
                 vec![
                     get_account_id_from_seed::<sr25519::Public>("Alice"),
@@ -234,7 +231,6 @@ pub fn development_config(id: ParaId) -> ChainSpec {
 
 fn testnet_genesis(
     root_key: AccountId,
-    maintainer: AccountId,
     initial_authorities: Vec<AuraId>,
     endowed_accounts: Vec<AccountId>,
     authorized_oracles: Vec<(AccountId, Vec<u8>)>,
@@ -310,21 +306,6 @@ fn testnet_genesis(
             premium_redeem_fee: FixedU128::checked_from_rational(5, 100).unwrap(), // 5%
             punishment_fee: FixedU128::checked_from_rational(1, 10).unwrap(), // 10%
             replace_griefing_collateral: FixedU128::checked_from_rational(1, 10).unwrap(), // 10%
-            maintainer_account_id: maintainer,
-            vault_rewards: FixedU128::checked_from_rational(80, 100).unwrap(),
-            maintainer_rewards: FixedU128::checked_from_rational(20, 100).unwrap(),
-            nomination_rewards: FixedU128::checked_from_rational(0, 100).unwrap(),
-        },
-        sla: SlaConfig {
-            vault_target_sla: FixedI128::from(100),
-            vault_redeem_failure_sla_change: FixedI128::from(-100),
-            vault_execute_issue_max_sla_change: FixedI128::from(4),
-            vault_deposit_max_sla_change: FixedI128::from(4),
-            vault_withdraw_max_sla_change: FixedI128::from(-4),
-            vault_submit_issue_proof: FixedI128::from(1),
-            vault_refund: FixedI128::from(1),
-            relayer_store_block: FixedI128::from(1),
-            relayer_theft_report: FixedI128::from(1),
         },
         refund: RefundConfig {
             refund_btc_dust_value: 1000,
